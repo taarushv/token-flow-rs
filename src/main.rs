@@ -2,20 +2,15 @@ use ethers::providers::{Http, Middleware, Provider};
 use ethers::types::{TxHash, Transaction, Trace, TransactionReceipt, CallType, Action, Address, U256};
 use std::{convert::TryFrom};
 
-const ARCHIVE_RPC:&str = "https://dashboard.flashbots.net/eth-sJrVNk4Xoa";
-// Interacts with tether, usdc, weth
-// arb b/w 0x and curve
+const ARCHIVE_RPC:&str = "https://dashboard.flashbots.net/eth-sJrVNk4Xoa"; // archive node rpc
 const TEST_TX:&str = "0x5ab21bfba50ad3993528c2828c63e311aafe93b40ee934790e545e150cb6ca73"; // Test tx to verify token flows
 const WEI_IN_ETHER: U256 = U256([0x0de0b6b3a7640000, 0x0, 0x0, 0x0]);
+
 // Relevant contracts
 const WETH:&str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const USDC:&str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const USDT:&str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const DAI:&str = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
-
-//const ETH_PRICE:f64 = 1471.5439;
-
-//const EXCLUDED_CONTRACTS: [&str; 1] = ["0x3d71d79c224998e608d03c5ec9b405e7a38505f0"]; // KeeperDAO which whitelists who can extract MEV
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +18,7 @@ async fn main() {
         ARCHIVE_RPC,
     )
     .unwrap();
-    core(provider).await
+    run_token_flow(provider).await
 }
 
 async fn get_tx_data<M: Middleware + Clone + 'static>(provider: M, tx: TxHash) -> Transaction{
@@ -47,7 +42,7 @@ fn get_proxy_impl(tx_traces:Vec<Trace>, contract:Address) -> Address {
         match &trace.action {
             Action::Call(call) => {
                 if proxy_impl == Address::zero() && call.call_type == CallType::DelegateCall && call.from == contract{
-                    proxy_impl= call.to; // TODO: what if they use multiple proxies?
+                    proxy_impl= call.to; // TODO: handle the edge case of multiple proxies
                 }
             }
             _ => continue, // we skip over other action types as we only care about the proxy (if any)
@@ -67,13 +62,6 @@ fn crop_address(s: &mut String, pos: usize) {
     }
 }
 
-// ETH_GET - done
-// ETH_GIVE - done
-// WETH_GET1 - done
-// WETH_GET2 - done
-// WETH_GIVE1 - done
-// WETH_GIVE2 - done
-// ETH_SELFDESTRUCT - Done
 
 fn get_ether_flows(tx_traces:Vec<Trace>, eoa: Address, contract: Address, proxy: Address) -> [U256; 2] {
     let mut eth_inflow= U256::zero();
@@ -246,44 +234,25 @@ fn get_stablecoin_flows(tx_traces: Vec<Trace>, eoa:Address, contract: Address, p
 }
 
 
-
-
-async fn parse_token_flow_from_traces(tx_traces:Vec<Trace>,eoa:Address, contract:Address, proxy:Address) {
-    println!("{} {} {}", eoa, contract, proxy);
-    println!("{}", tx_traces.len())
-}
-
-
-
-async fn core<M: Middleware + Clone + 'static>(provider: M) {
-    
-    // Get latest block number to make sure we're hooked up to the node
+async fn run_token_flow<M: Middleware + Clone + 'static>(provider: M) {
     let tx_hash = TEST_TX.parse::<TxHash>().unwrap();
-    
-
     let tx_data = get_tx_data(provider.clone(), tx_hash).await;
-
-    let tx_receipt = get_tx_receipt(provider.clone(), tx_hash).await;
-    //let gas_used_in_wei = tx_receipt.gas_used.unwrap();
-
-    //let cost_in_wei = gas_used_in_wei * tx_data.gas_price; // "cost"
+    let tx_receipt = get_tx_receipt(provider.clone(), tx_hash).await; // receipt to find of if it failed + gas used. 
+    let gas_used_in_wei = tx_receipt.gas_used.unwrap();
+    let cost_in_wei = gas_used_in_wei * tx_data.gas_price;
     let eoa = tx_data.from; // searcher address
-    let contract = tx_data.to.unwrap(); // 
-    //let eth_price = ETH_PRICE;
-    //let mut revenue_parsed:f64 = 0.0;
-
-    //let gas_used = tx_recepit.gas_used.unwrap();
-    //let gas_cost = format_units(tx_data.gas_price * tx_data.gas, 9);
-    //let gas_cost = (tx_data.gas * tx_data.gas_price)/base.pow(18);
-    //println!("Tx data:  {:?}", tx_data);
-    
+    let contract = tx_data.to.unwrap(); // contract that does the atomic arb or simply arranges txs in a bundle
     let tx_traces = get_tx_traces(provider.clone(), tx_hash).await;
     let proxy = get_proxy_impl(tx_traces.clone(), contract);
+    println!("EOA: {:?}", eoa);
+    println!("Contract: {:?}", contract);
     println!("Tx proxy: {:?}", proxy);
-    //parse_token_flow_from_traces().await;
-    //parse_token_flow_from_traces(tx_traces.clone(), eoa, contract, proxy).await;
-    println!("Eth inflow/outflow: {:?}",get_ether_flows(tx_traces.clone(), eoa, contract, proxy));
-    println!("Stablecoins inflow/outflow: {:?}", get_stablecoin_flows(tx_traces.clone(), eoa, contract, proxy))
+    let ether_flows = get_ether_flows(tx_traces.clone(), eoa, contract, proxy);
+    println!("Stablecoins inflow/outflow: {:?}", get_stablecoin_flows(tx_traces.clone(), eoa, contract, proxy));
+    println!("Net ETH profit, Wei {:?}", (ether_flows[0] - ether_flows[1] - cost_in_wei));
+
+    //TODO: Convert stablecoin profits to ETH based on historical price
+    //TODO: Test cases for each function, especially around math precision
 }
 
 
