@@ -1,0 +1,13 @@
+[package]
+name = "token_flow"
+version = "0.1.0"
+authors = ["Taarush Vemulapalli <saikarthiktaarush.vemulapalli@sjsu.edu>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+tokio = { version = "1.0.2", features = ["macros", "rt-multi-thread"] }
+hex = "0.4"
